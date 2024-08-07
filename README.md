@@ -7,8 +7,6 @@ A tool for processing Split-seq reads to extract, correct, and tag barcodes. It 
 - [Description](#description)
 - [Requirements and Installation](#requirements-and-installation)
 - [Usage](#usage)
-- [Arguments](#arguments)
-- [Output Files](#output-files)
 - [License](#license)
 - [Contact](#contact)
 
@@ -48,7 +46,7 @@ Example:
 python barQC.py -c data/clean_reads.bam -o results/output.bam -b barcode_list -q 20 -t 10 -v
 ```
 
-## Arguments
+### Arguments
 
 - `-c, --clean_reads`: Path to the clean reads BAM file (required)
 - `-o, --output_bam`: Path to the output BAM file (required)
@@ -57,7 +55,7 @@ python barQC.py -c data/clean_reads.bam -o results/output.bam -b barcode_list -q
 - `-t, --threads`: Number of threads for parallel processing (default: 20)
 - `-v, --verbose`: Enable verbose logging
 
-## Output Files
+### Output Files
 
 - `<output.bam>`: BAM file with tagged barcodes.
 - `<output_base>.log`: Log file with processing information.
@@ -72,4 +70,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Contact
 
 This project was created by [Maria Rossello](https://github.com/m-rossello).
-For more info, support, or to send your favorite cat memes, email Maria at [Maria Rossello](mailto:mariarossello@ub.edu)
+For more info, support, or to send your favorite cat memes, email Maria at [mariarossello@ub.edu](mailto:mariarossello@ub.edu)
