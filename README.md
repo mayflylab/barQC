@@ -43,7 +43,7 @@ python barQC.py -c <clean_reads.bam> -o <output.bam> [optional arguments]
 Example:
 
 ```sh
-python barQC.py -c data/clean_reads.bam -o results/output.bam -b barcode_list -q 20 -t 10 -v
+    python barQC.py -c data/clean_reads.bam -o results/output.bam -b barcode_list -q 20 -t 10 -v
 ```
 
 ### Arguments
@@ -62,6 +62,12 @@ python barQC.py -c data/clean_reads.bam -o results/output.bam -b barcode_list -q
 - `<output_base>_debug.log`: Debug log file (if verbose mode is enabled).
 - `<output_base>_stats.log`: Statistics log file with processing metrics.
 - `<output_base>_heatmap_<barcode>.png`: Heatmap visualizations of barcode distribution per Split-seq plate.
+
+### Additional Files
+
+- **Barcode Files**. The repository contains a directory (`barcode_list`) with expected barcode files and the invariant sequence used for tagging. Proper configuration of these files is crucial for the correct functioning of the barQC tool.
+- **Conda Environment File**. The `barQC_conda_recipe.yml` file provides the necessary dependencies for the tool. Use this file to create and activate the conda environment required to run barQC
+- **Test Data Directory**. The `test_data` directory contains example input files for testing the tool. This can be used to verify that the installation and basic functionality of the tool are correct.
 
 ## License
 
