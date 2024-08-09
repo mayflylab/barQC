@@ -183,29 +183,40 @@ stats_logger.propagate = False
 # Auxiliary functions to map the barcodes
 #--------------------------------------------------------------------------------------------------------
 
-def dataframe_to_fastq(bam_as_df):
+def generate_fastq_entries(bam_as_df):
 
     """
-    Converts a DataFrame containing BAM data to FASTQ format.
+    Generates FASTQ entries from a DataFrame containing BAM data.
+
+    Args:
+        bam_as_df (pd.DataFrame): DataFrame containing BAM data with columns 'query_name', 'seq', and 'qual'.
+
+    Yields:
+        str: FASTQ entry string for each row in the DataFrame.
+    """
+
+    for row in tqdm(bam_as_df.itertuples(index=False), total=len(bam_as_df), desc="Generating FASTQ entries"):
+        query_name = row.query_name
+        seq = row.seq
+        qual = ''.join(map(lambda q: chr(q + 33), row.qual))
+        
+        # Construct FASTQ entry
+        fastq_entry = f"@{query_name}\n{seq}\n+\n{qual}\n"
+        yield fastq_entry
+
+def get_fastq_string(bam_as_df):
+
+    """
+    Concatenates FASTQ entries into a single string from a DataFrame containing BAM data.
 
     Args:
         bam_as_df (pd.DataFrame): DataFrame containing BAM data with columns 'query_name', 'seq', and 'qual'.
 
     Returns:
-        str: FASTQ formatted string.
+        str: Single concatenated FASTQ string containing all entries.
     """
-   
-    fastq_entries = []
-    for _, row in bam_as_df.iterrows():
-        query_name = row['query_name']
-        seq = row['seq']
-        qual = ''.join(chr(q + 33) for q in row['qual'])
-        
-        # Construct FASTQ entry
-        fastq_entry = f"@{query_name}\n{seq}\n+\n{qual}\n"
-        fastq_entries.append(fastq_entry)
-    
-    return ''.join(fastq_entries)
+
+    return ''.join(generate_fastq_entries(bam_as_df))
 
 def trim_seq(fastq_data, debug_logger=None):
 
@@ -398,7 +409,7 @@ def run_bbmap(bam_as_df, reference, cores):
     """
    
     logging.info("Obtaining FASTQ from BAM.")
-    fastq = dataframe_to_fastq(bam_as_df)
+    fastq = get_fastq_string(bam_as_df)
 
     logging.info("Cutting sequences to 100 bp")
     trimmed_fastq = trim_seq(fastq)
