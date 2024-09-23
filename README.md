@@ -37,31 +37,34 @@ bbmap is used by the python script but it's intallation is not available troght 
 To run the tool, use the following command:
 
 ```sh
-python barQC.py -c <clean_reads.bam> -o <output.bam> [optional arguments]
+python barQC.py -f1 <read1 fastq> -f2 <read2 fastq> -o <output name> [optional arguments]
 ```
 
 Example:
 
 ```sh
-    python barQC.py -c data/clean_reads.bam -o results/output.bam -b barcode_list -q 20 -t 10 -v
+    python barQC.py -f1 data/clean_reads_1.fastq - data/clean_reads_2.fastq -o results/output -b barcode_list -t 24 --stats
 ```
 
 ### Arguments
 
-- `-c, --clean_reads`: Path to the clean reads BAM file (required)
-- `-o, --output_bam`: Path to the output BAM file (required)
-- `-b, --bc_dir`: Directory with expected barcode files and the invariant sequence (default: barcode_list)
+- `-f1, --read1_fastq`: Path to the fastq file of read1 (required)
+- `-f2, --read2_fastq`: Path to the fastq file of read2 containing the barcode sequence (required)
+- `-o, --output_name`: Path to the output files (required)
+- `-b, --bc_dir`: Directory with expected barcode files (default: current directory)
 - `-q, --qval`: Quality threshold (default: 10)
 - `-t, --threads`: Number of threads for parallel processing (default: 20)
-- `-v, --verbose`: Enable verbose logging
+- `-s, --stats`: Save stats in an output file.
+- `-v, --verbose`: Enable verbose logging. Usefull for debugging.
+- `--skip_tagging`: Skip the tagging step and only generate statistics.
 
 ### Output Files
 
-- `<output.bam>`: BAM file with tagged barcodes.
-- `<output_base>.log`: Log file with processing information.
-- `<output_base>_debug.log`: Debug log file (if verbose mode is enabled).
-- `<output_base>_stats.log`: Statistics log file with processing metrics.
-- `<output_base>_heatmap_<barcode>.png`: Heatmap visualizations of barcode distribution per Split-seq plate.
+- `<output_name>.bam`: BAM file with tagged barcodes.
+- `<output_name>.log`: Log file with processing information.
+- `<output_name>_heatmap_<barcode>.png`: Heatmap visualizations of barcode distribution per Split-seq plate.
+- `<output_name>_stats.log`: Statistics log file with processing metrics (if stats mode is enabled).
+- `<output_name>_debug.log`: Debug log file (if verbose mode is enabled).
 
 ### Additional Files
 
@@ -76,4 +79,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Contact
 
 This project was created by [Maria Rossello](https://github.com/m-rossello).
-For more info, support, or to send your favorite cat memes, email Maria at [mariarossello@ub.edu](mailto:mariarossello@ub.edu)
+For more info, support, or any feedback, email Maria at [mariarossello@ub.edu](mailto:mariarossello@ub.edu)

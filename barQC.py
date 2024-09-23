@@ -10,31 +10,32 @@ Description:
     statistical reports and visualizations of the barcode distribution per Split-seq plate.
 
 Usage:
-    barQC.py -c <clean_reads.bam> -o <output.bam> [optional arguments]
+    barQC.py -f1 <read1.fastq> -f2 <read2.fastq> -o <output.bam> [optional arguments]
 
 Arguments:
-    -c, --clean_reads : Path to the clean reads BAM file (required)
-    -o, --output_bam  : Path to the output BAM file (required)
-    -b, --bc_dir      : Directory with expected barcode files (default: current directory)
-    -q, --qval        : Quality threshold (default: 10)
-    -t, --threads     : Number of threads for parallel processing (default: 20)
-    -v, --verbose     : Enable verbose logging
+    -f1, --read1_fastq : Path to the fastq file of read1 (required)
+    -f2, --read2_fastq : Path to the fastq file of read2 containing the barcode sequence (required)
+    -o, --output_name   : Path to the output files (required)
+    -b, --bc_dir       : Directory with expected barcode files (default: current directory)
+    -q, --qval         : Quality threshold (default: 10)
+    -t, --threads      : Number of threads for parallel processing (default: 20)
+    -s, --stats        : Save stats in an output file
+    -v, --verbose      : Enable verbose logging
+    --skip_tagging     : Skip the tagging step and only generate statistics.
 
 Output Files:
-    <output.bam>              : BAM file with tagged barcodes.
-    <output_base>.log         : Log file with processing information.
-    <output_base>_debug.log   : Debug log file (if verbose mode is enabled).
-    <output_base>_stats.log   : Statistics log file with processing metrics.
-    <output_base>_heatmap_<barcode>.png : Heatmap visualizations of barcode distribution per Split-seq plate.
+    <output_name>.bam                   : BAM file with tagged barcodes.
+    <output_name>.log                   : Log file with processing information.
+    <output_name>_heatmap_<barcode>.png : Heatmap visualizations of barcode distribution per Split-seq plate.
+    <output_name>_stats.log             : Statistics log file with processing metrics (if stats mode is enabled).
+    <output_name>_debug.log             : Debug log file (if verbose mode is enabled).
 """
 
 
-#########################################################################################################
-# PROGRAM ARGUMENTS
+#%% PROGRAM ARGUMENTS
 #########################################################################################################
 
-#--------------------------------------------------------------------------------------------------------
-# Load libraries to use in teh script
+#%%% Load libraries to use in the script
 #--------------------------------------------------------------------------------------------------------
 
 import argparse
@@ -60,8 +61,8 @@ import subprocess
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-#--------------------------------------------------------------------------------------------------------
-# Argument parser setup
+
+#%%% Argument parser setup
 #--------------------------------------------------------------------------------------------------------
 
 parser = argparse.ArgumentParser(prog='barQC.py',
@@ -71,13 +72,20 @@ parser = argparse.ArgumentParser(prog='barQC.py',
 # Group required arguments
 required = parser.add_argument_group('required arguments')
 
-required.add_argument('-c', '--clean_reads',
-                      help='Path to the clean reads BAM file. Reads mus be without adapters.',
+required.add_argument('-f1', '--read1_fastq',
+                      help='Path to the fastq file for read 1. This reads contains mRNA information' 
+                           'Reads must be without adapters.',
                       type=str,
                       required=True)
 
-required.add_argument('-o', '--output_bam',
-                      help='Path to the output BAM file.',
+required.add_argument('-f2', '--read2_fastq',
+                      help='Path to the fastq file for read 2. This reads contains barcode information' 
+                           'Reads must be without adapters.',
+                      type=str,
+                      required=True)
+
+required.add_argument('-o', '--output_name',
+                      help='Path to the output files. Add path and prefix.',
                       type=str,
                       required=True)
 
@@ -85,10 +93,10 @@ required.add_argument('-o', '--output_bam',
 optional = parser.add_argument_group('optional arguments')
 
 optional.add_argument('-b', '--bc_dir', 
-                      help='Directory where the expected barcodes CSV files and linker fasta are stored. '
-                           'Default to barcode_list.',
+                      help='Directory where the expected barcodes CSV files and linker fasta are stored.'
+                           'Defaults to the directory this script is in.',
                       type=str, 
-                      default="./barcode_list")
+                      default=".")
 
 optional.add_argument('-q', '--qval', 
                       help='Quality threshold for barcode evaluation.',
@@ -104,16 +112,24 @@ optional.add_argument('-v', '--verbose',
                       help='Enable verbose logging.',
                       action='store_true')
 
+optional.add_argument('-s', '--stats', 
+                      help='Save stats in an output file.',
+                      action='store_true')
+
+optional.add_argument('--skip_tagging', 
+                      help='Skip the tagging step and only generate statistics.', 
+                      action='store_true')
+
 # Parse the arguments
 args = parser.parse_args()
 
-#--------------------------------------------------------------------------------------------------------
-# Check all the requirements are provided
+
+#%%% Check all the requirements are provided
 #--------------------------------------------------------------------------------------------------------
 
 # Check if all required arguments are provided and validate paths
-required_args_path = {'clean_reads': args.clean_reads, 'bc_dir': args.bc_dir}
-missing_args_path = [arg for arg, path in required_args_path.items() if path is None or not os.path.isfile(path) and arg != 'bc_dir']
+required_args_path = {'read1_fastq': args.read1_fastq, 'read2_fastq': args.read2_fastq,'bc_dir': args.bc_dir}
+missing_args_path = [arg for arg, path in required_args_path.items() if (path is None or not os.path.isfile(path)) and arg != 'bc_dir']
 if missing_args_path:
     parser.print_help()
     print(f"\nError: Missing or invalid arguments or incorrect path: {', '.join(missing_args_path)}\n")
@@ -128,7 +144,7 @@ if missing_files:
     exit(1)
 
 # Check if all required arguments are provided
-required_args = ['output_bam']
+required_args = ['output_name']
 missing_args = [arg for arg in required_args if getattr(args, arg) is None]
 if missing_args:
     parser.print_help()
@@ -136,13 +152,12 @@ if missing_args:
     exit(1)
 
 
-#--------------------------------------------------------------------------------------------------------
-# Set up logging configurations
+#%%% Set up logging configurations
 #--------------------------------------------------------------------------------------------------------
 
 # Determine the output directory and base name from the output BAM file path
-output_dir = os.path.dirname(args.output_bam)
-output_base = os.path.basename(args.output_bam).split('.')[0]
+output_dir = os.path.dirname(args.output_name)
+output_base = os.path.basename(args.output_name)
 log_path = os.path.join(output_dir, f"{output_base}.log")
 
 # Configure the main log to log general information
@@ -166,90 +181,24 @@ else:
     debug_logger = None
 
 # Configure the logger for final statistics
-stats_log_path = os.path.join(output_dir, f"{output_base}_stats.log")
-stats_logger = logging.getLogger('stats_logger')
-stats_logger.setLevel(logging.INFO)
-stats_handler = logging.FileHandler(stats_log_path, mode='w')
-stats_handler.setFormatter(logging.Formatter('%(message)s'))  # Only log the message
-stats_logger.addHandler(stats_handler)
-stats_logger.propagate = False
+if args.stats:
+    stats_log_path = os.path.join(output_dir, f"{output_base}_stats.log")
+    stats_logger = logging.getLogger('stats_logger')
+    stats_logger.setLevel(logging.INFO)
+    stats_handler = logging.FileHandler(stats_log_path, mode='w')
+    stats_handler.setFormatter(logging.Formatter('%(message)s'))  # Only log the message
+    stats_logger.addHandler(stats_handler)
+    stats_logger.propagate = False
+else:
+    stats_logger = None
 
 
+#%% FUNCTIONS
 #########################################################################################################
-# FUNCTIONS
-#########################################################################################################
 
+
+#%%% Auxiliary functions to map the barcodes
 #--------------------------------------------------------------------------------------------------------
-# Auxiliary functions to map the barcodes
-#--------------------------------------------------------------------------------------------------------
-
-def generate_fastq_entries(bam_as_df):
-
-    """
-    Generates FASTQ entries from a DataFrame containing BAM data.
-
-    Args:
-        bam_as_df (pd.DataFrame): DataFrame containing BAM data with columns 'query_name', 'seq', and 'qual'.
-
-    Yields:
-        str: FASTQ entry string for each row in the DataFrame.
-    """
-
-    for row in tqdm(bam_as_df.itertuples(index=False), total=len(bam_as_df), desc="Generating FASTQ entries"):
-        query_name = row.query_name
-        seq = row.seq
-        qual = ''.join(map(lambda q: chr(q + 33), row.qual))
-        
-        # Construct FASTQ entry
-        fastq_entry = f"@{query_name}\n{seq}\n+\n{qual}\n"
-        yield fastq_entry
-
-def get_fastq_string(bam_as_df):
-
-    """
-    Concatenates FASTQ entries into a single string from a DataFrame containing BAM data.
-
-    Args:
-        bam_as_df (pd.DataFrame): DataFrame containing BAM data with columns 'query_name', 'seq', and 'qual'.
-
-    Returns:
-        str: Single concatenated FASTQ string containing all entries.
-    """
-
-    return ''.join(generate_fastq_entries(bam_as_df))
-
-def trim_seq(fastq_data, debug_logger=None):
-
-    """
-    Trims sequences in FASTQ data to 100 bp using cutadapt.
-
-    Args:
-        fastq_data (str): FASTQ formatted string.
-        debug_logger (logging.Logger, optional): Logger for debugging messages. Default is None.
-
-    Returns:
-        str: Trimmed FASTQ formatted string, or None if an error occurs.
-    """
-
-    try:
-        process = subprocess.Popen(
-            ['cutadapt', '-l', '100', '-'],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        trimmed_fastq, cutadapt_stderr = process.communicate(input=fastq_data)
-        
-        if cutadapt_stderr and debug_logger:
-            debug_logger.debug(f"Cutadapt:\n{cutadapt_stderr}")
-        
-        return trimmed_fastq
-    
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Error occurred while running cutadapt: {e}")
-        logging.error(f"Error message:\n{e.stderr}")
-        return None
    
 def compute_initial_coordinates(map_df, barcode_col, pattern, offset):
 
@@ -274,42 +223,43 @@ def compute_initial_coordinates(map_df, barcode_col, pattern, offset):
     return map_df
 
 
-#--------------------------------------------------------------------------------------------------------
-# Auxiliary functions to handle barcodes
+#%%% Auxiliary functions to handle barcodes
 #--------------------------------------------------------------------------------------------------------
 
-def evaluate_barcode_quality(quality_scores, threshold):
+def evaluate_barcode_quality(quality, threshold):
 
     """
     Evaluates the quality of a barcode based on its quality scores.
 
     Args:
-        quality_scores (list): List of quality scores.
+        quality_scores (list): List of quality in ascii.
         threshold (int): Quality threshold.
 
     Returns:
         bool: True if the average quality meets or exceeds the threshold, False otherwise.
     """
 
+    quality_scores = [ord(char) - 33 for char in quality]
+
     return len(quality_scores) > 0 and np.mean(np.array(quality_scores)) >= threshold
 
-def compute_hamming_distance(mybc, expectedbc):
+def compute_hamming_distance(my_bc, expected_bc):
 
     """
     Calculates the Hamming distance between two strings.
 
     Args:
-        mybc (str): Barcode to be evaluated.
-        expectedbc (str): Expected barcode.
+        my_bc (str): Barcode to be evaluated.
+        expected_bc (str): Expected barcode.
 
     Returns:
         int: Hamming distance, or None if the barcodes have different lengths.
     """
-    if len(mybc) != len(expectedbc):
+    if len(my_bc) != len(expected_bc):
         return None
 
-    mybc_array = np.frombuffer(mybc.encode(), dtype=np.uint8)
-    expectedbc_array = np.frombuffer(expectedbc.encode(), dtype=np.uint8)
+    mybc_array = np.frombuffer(my_bc.encode(), dtype=np.uint8)
+    expectedbc_array = np.frombuffer(expected_bc.encode(), dtype=np.uint8)
 
     return np.sum(mybc_array != expectedbc_array)
 
@@ -347,80 +297,102 @@ def check_and_correct_barcode(barcode, expected_barcode):
             non_correct_bc.append('Err2')
             return None, non_correct_bc
 
-
-#--------------------------------------------------------------------------------------------------------
-# Functions to open BAM file
-#--------------------------------------------------------------------------------------------------------
-
-def parse_clean_bam_file(clean_bam_file_path):
-
+def correct_and_append(barcode, qbarcode, expected_data_dict, qthreshold, qname, bc_type):
+    
     """
-    Parses the clean BAM file to extract relevant information.
-
+    Corrects the barcode if it matches the expected barcode set within a Hamming distance of 1.
+    
     Args:
-        clean_bam_file_path (str): Path to the clean reads BAM file.
+        barcode (str): The barcode to be corrected.
+        qbarcode (list): Quality scores associated with the barcode.
+        expected_data_dict (dict): Dictionary of expected barcodes with their well positions.
+        qthreshold (int): Quality threshold to evaluate barcode quality.
+        qname (str): Query name for logging purposes.
+        bc_type (str): Type of barcode being corrected.
 
     Returns:
-        pd.DataFrame: DataFrame containing the parsed information.
+        str: The corrected barcode, or None if it can't be corrected.
     """
 
-    logging.info(f"Opening Cleaned Reads bam")
-
-    records = []
-    try:
-        with pysam.AlignmentFile(clean_bam_file_path, "rb", check_sq=False) as bamfile:
-            total_reads = bamfile.mapped + bamfile.unmapped
-            with tqdm(total=total_reads, desc="Parsing clean BAM file") as pbar:
-                for read in bamfile.fetch(until_eof=True):
-                    if read.is_read2:
-                        # Process only read2
-                            
-                        records.append({
-                            'query_name': read.query_name.split(' ')[0],
-                            'seq': read.query_sequence,
-                            'qual':read.query_qualities
-                        })
-
-                    pbar.update(1)    
-
-        return pd.DataFrame(records)
+    if evaluate_barcode_quality(qbarcode, qthreshold):
+        for expected_bc in expected_data_dict:
+            hamming_dist = compute_hamming_distance(barcode, expected_bc)
+            if hamming_dist == 1:
+                return expected_bc  # Found a barcode with a Hamming distance of 1
+            elif hamming_dist == 0:
+                return barcode  # The barcode is already correct
+        if debug_logger:
+            debug_logger.debug(f"Impossible to correct the barcode in {qname} for {bc_type}")
     
+    return None
+
+
+#%%% Functions to open files
+#--------------------------------------------------------------------------------------------------------
+
+def fastq_to_dataframe(fastq_file):
+    query_names = []
+    sequences = []
+    qualities = []
+
+    string_fastq = []
+
+    try:
+        # Calculate the total number of reads
+        with pysam.FastxFile(fastq_file) as fastq:
+            total_reads = sum(1 for _ in fastq)  # Count entries
+
+        # Parsing fastq with progress bar
+        with pysam.FastxFile(fastq_file) as fastq:
+            with tqdm(total=total_reads, desc="Parsing fastq for read 2") as pbar:
+                for entry in fastq:
+                    query_names.append(entry.name)
+                    sequences.append(entry.sequence)
+                    qualities.append(entry.quality)
+                    pbar.update(1)
+
+                    # Fastq to string for the 100 nucleotides
+                    string_fastq.append(f"@{entry.name}\n{entry.sequence[:100]}\n+\n{entry.quality[:100].strip()}")
+
+        # Create DataFrame
+        df_fastq = pd.DataFrame({
+            'query_name': query_names,
+            'seq': sequences,
+            'qual': qualities
+        })
+
+        return string_fastq, df_fastq
+
     except Exception as e:
-        logging.error(f"Failed to parse BAM file {clean_bam_file_path}: {e}")
-        return pd.DataFrame()
+        logging.error(
+            f"Failed to parse fastq file {fastq_file}: {e}. "
+            "Ensure that the read2 fastq file is correctly formatted and accessible. "
+            "You may also want to check if the file is corrupted or improperly indexed."
+        )
+        sys.exit(1)
 
-
+#%%% Functions to obtain the align barcodes
 #--------------------------------------------------------------------------------------------------------
-# Functions to obtain the align barcodes
-#--------------------------------------------------------------------------------------------------------
 
-def run_bbmap(bam_as_df, reference, cores):
+def run_bbmap(string_fastq, reference, cores):
 
     """
-    Runs bbmap.sh to align sequences and find barcodes using in-memory FASTQ data.
+    Runs bbmap.sh to align sequences and find barcodes.
 
     Args:
-        bam_as_df (pd.DataFrame): DataFrame containing BAM data.
+        fastq_as_df (pd.DataFrame): DataFrame containing BAM data.
         reference (str): Path to the reference genome.
         cores (int): Number of threads to use for parallel processing.
 
     Returns:
         bytes: Mapped BAM data in SAM format.
     """
-   
-    logging.info("Obtaining FASTQ from BAM.")
-    fastq = get_fastq_string(bam_as_df)
-
-    logging.info("Cutting sequences to 100 bp")
-    trimmed_fastq = trim_seq(fastq)
-
-    if trimmed_fastq is None:
-        logging.error("Error: Timing did not run successfully.")
-        sys.exit(1) 
-
-    logging.info("Aligning sequence to find barcodes")
+    logging.info("Aligning sequence to find barcodes. This can take a while.")
 
     try:
+        # Join the FASTQ entries into a single string and encode it
+        fastq_data = '\n'.join(string_fastq).encode()
+
         process = subprocess.Popen(
             [
                 'bbmap.sh',
@@ -435,23 +407,27 @@ def run_bbmap(bam_as_df, reference, cores):
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=False  # Important for binary output
+            text=False  # Important for binary input/output
         )
-        logging.debug("Communicating with bbmap.sh process.")
-        bbmap_stdout, bbmap_stderr = process.communicate(input=trimmed_fastq.encode())
+
+        bbmap_stdout, bbmap_stderr = process.communicate(input=fastq_data)
 
         logging.info("Sequence aligned to find barcodes")
-        logging.debug(f"bbmap.sh stdout length: {len(bbmap_stdout)} bytes")
-        logging.debug(f"bbmap.sh stderr length: {len(bbmap_stderr)} bytes")
-
-        if bbmap_stderr:
-            logging.debug(f"BBMap Info:\n{bbmap_stderr.decode()}")
+            
+        process.wait()
 
         return bbmap_stdout
     
     except subprocess.CalledProcessError as e:
-        logging.error(f"Error occurred while running bbmap.sh: {e}")
-        logging.error(f"Error message:\n{e.stderr.decode()}")
+        logging.error(
+            f"Error occurred while running bbmap.sh: {e}. "
+            "This may be due to issues with the reference genome, input FASTQ data, or system resources. "
+            "Check the stderr output for more details:\n{e.stderr.decode()}"
+        )
+        logging.error(
+            "Ensure that the reference file exists, is correctly formatted, "
+            "and that there is sufficient memory and CPU available."
+        )
         sys.exit(1)
 
 def parse_and_compute_coordinates(mapped_bam):
@@ -476,6 +452,8 @@ def parse_and_compute_coordinates(mapped_bam):
         mapped_bam = mapped_bam.decode('utf-8')
     lines = mapped_bam.split('\n')
 
+    # print(lines)
+
     for line in lines:
         if not line.strip():
             # Skip empty lines
@@ -496,6 +474,7 @@ def parse_and_compute_coordinates(mapped_bam):
 
     map_df = pd.DataFrame(records)
 
+
     # Get barcodes
     map_df = compute_initial_coordinates(map_df, 'BC1', r'([0-9]+S$)', 0)
     map_df = compute_initial_coordinates(map_df, 'BC2', r'([^0-9][7-9]I.*)', 0)
@@ -506,126 +485,112 @@ def parse_and_compute_coordinates(mapped_bam):
     return map_df.set_index('query_name').to_dict('index')
                         
 
-#--------------------------------------------------------------------------------------------------------
-# Process barcodes
+#%%% Process barcodes
 #--------------------------------------------------------------------------------------------------------
 
-def process_barcodes(clean_df, map_dict, barcode_files_dir, qthreshold):
+from tqdm import tqdm
 
+def process_barcodes(clean_df, map_dict, barcode_files_dir, qthreshold, chunk_size=10000):
     """
-    Processes the barcodes by extracting, evaluating quality, and correcting against expected barcodes.
+    Processes barcode sequences from a DataFrame in chunks and applies barcode corrections, with a progress bar.
 
     Args:
-        clean_df (pd.DataFrame): DataFrame containing the clean reads data.
-        map_dict (dict): Dictionary with mapping information.
+        clean_df (pd.DataFrame): DataFrame containing sequence and quality information.
+        map_dict (dict): Dictionary mapping query names to read mappings.
         barcode_files_dir (str): Directory containing expected barcode files.
-        qthreshold (int): Quality threshold for barcode evaluation.
+        qthreshold (int): Quality threshold for barcode correction.
+        chunk_size (int): Number of reads to process in each chunk.
 
     Returns:
-        tuple: 
-            pd.DataFrame: DataFrame containing the processed and corrected barcodes.
-            pd.DataFrame: DataFrame with barcode statistics.
-    """    
-    
-    total_rows = len(clean_df)
+        pd.DataFrame: Processed barcodes with corrected barcodes and UMI.
+        pd.DataFrame: Aggregated statistics for barcode correction.
+    """
+    # Load barcode data into DataFrames
+    bc1_data = pd.read_csv(os.path.join(barcode_files_dir, "expected_barcodes_1.csv"))
+    bc2_data = pd.read_csv(os.path.join(barcode_files_dir, "expected_barcodes_2.csv"))
+    bc3_data = pd.read_csv(os.path.join(barcode_files_dir, "expected_barcodes_3.csv"))
+
+    # Create dictionaries for fast lookups
+    bc1_dict = dict(zip(bc1_data['Barcode'], bc1_data['WellPosition']))
+    bc2_dict = dict(zip(bc2_data['Barcode'], bc2_data['WellPosition']))
+    bc3_dict = dict(zip(bc3_data['Barcode'], bc3_data['WellPosition']))
+
     barcode_ls = []
-    
-    try:
-        bc1_data = pd.read_csv(os.path.join(barcode_files_dir, "expected_barcodes_1.csv"))
-    except FileNotFoundError:
-        logging.error("File 'expected_barcodes_1.csv' not found in the directory '%s'.", barcode_files_dir)
-        return pd.DataFrame(), pd.DataFrame()
+    barcode_stats_list = []
 
-    try:
-        bc2_data = pd.read_csv(os.path.join(barcode_files_dir, "expected_barcodes_2.csv"))
-    except FileNotFoundError:
-        logging.error("File 'expected_barcodes_2.csv' not found in the directory '%s'.", barcode_files_dir)
-        return pd.DataFrame(), pd.DataFrame()
+    # Process in chunks
+    num_chunks = int(np.ceil(len(clean_df) / chunk_size))
 
-    try:
-        bc3_data = pd.read_csv(os.path.join(barcode_files_dir, "expected_barcodes_3.csv"))
-    except FileNotFoundError:
-        logging.error("File 'expected_barcodes_3.csv' not found in the directory '%s'.", barcode_files_dir)
-        return pd.DataFrame(), pd.DataFrame()
+    with tqdm(total=len(clean_df), desc="Processing barcodes") as pbar:
+        for i in range(num_chunks):
+            chunk = clean_df[i * chunk_size:(i + 1) * chunk_size]
 
-    # Initialize a DataFrame to store barcode counts
-    barcode_stats = pd.DataFrame(columns=['WellPosition', 'Name', 'Barcode', 'Count'])
+            for entry in chunk.itertuples(index=False):
+                if entry.query_name in map_dict:
 
-    for entry in tqdm(clean_df.itertuples(), total=total_rows, desc="Processing and correcting barcodes"):
+                    qname = entry.query_name
+                    rmap = map_dict[qname]
+                    seq = np.array(list(entry.seq))
+                    q = np.array(list(entry.qual))
 
-        if entry.query_name in map_dict:
-            # Only process files that have a correct CIGAR
+                    bc1 = ''.join(seq[rmap['BC1']:rmap['BC1'] + 10])
+                    bc2 = ''.join(seq[rmap['BC2']:rmap['BC2'] + 8])
+                    bc3 = ''.join(seq[rmap['BC3']:rmap['BC3'] + 8])
 
-            qname = entry.query_name
-            rmap = map_dict[qname]
-            seq = np.array(list(entry.seq))
-            q = np.array(entry.qual)
+                    qbc1 = ''.join(q[rmap['BC1']:rmap['BC1'] + 10])
+                    qbc2 = ''.join(q[rmap['BC2']:rmap['BC2'] + 8])
+                    qbc3 = ''.join(q[rmap['BC3']:rmap['BC3'] + 8])
 
-            # Get barcode sequence
-            bc1 = ''.join(seq[rmap['BC1']:rmap['BC1'] + 10])
-            bc2 = ''.join(seq[rmap['BC2']:rmap['BC2'] + 8])
-            bc3 = ''.join(seq[rmap['BC3']:rmap['BC3'] + 8])
+                    corrected_bc1 = correct_and_append(bc1, qbc1, bc1_dict, qthreshold, qname, 'Barcode1')
+                    corrected_bc2 = correct_and_append(bc2, qbc2, bc2_dict, qthreshold, qname, 'Barcode2')
+                    corrected_bc3 = correct_and_append(bc3, qbc3, bc3_dict, qthreshold, qname, 'Barcode3')
 
-            # Get barcode quality score
-            qbc1 = q[rmap['BC1']:rmap['BC1'] + 10]
-            qbc2 = q[rmap['BC2']:rmap['BC2'] + 8]
-            qbc3 = q[rmap['BC3']:rmap['BC3'] + 8]
+                    umi_start = rmap['BC3'] - 11 if rmap['BC3'] > 10 else 0
+                    umi_end = rmap['BC3'] if rmap['BC3'] > 1 else 1
+                    umi = ''.join(seq[umi_start:umi_end])
+                    qumi = q[umi_start:umi_end]
 
-            # Filter by quality and correct barcode
-            def correct_and_append(barcode, qbarcode, expected_data, qname, bc_type):
-                if evaluate_barcode_quality(qbarcode, qthreshold):
-                    corrected, errors = check_and_correct_barcode(barcode, expected_data['Barcode'])
-                    if debug_logger:
-                        for error in errors:
-                            if error == 'Err1':
-                                debug_logger.debug(f"Wrong barcode length in {qname} for {bc_type}")
-                            elif error == 'Err2':
-                                debug_logger.debug(f"Impossible to correct the barcode in {qname} for {bc_type}")
-                    return corrected, errors
-                return None, []
+                    if evaluate_barcode_quality(qumi, qthreshold):
+                        umi = umi
+                    else:
+                        umi = None
 
-            corrected_bc1, errors_bc1 = correct_and_append(bc1, qbc1, bc1_data, qname, 'Barcode1')
-            corrected_bc2, errors_bc2 = correct_and_append(bc2, qbc2, bc2_data, qname, 'Barcode2')
-            corrected_bc3, errors_bc3 = correct_and_append(bc3, qbc3, bc3_data, qname, 'Barcode3')
+                    if None not in [corrected_bc1, corrected_bc2, corrected_bc3]:
+                        barcode_ls.append({
+                            'query_name': qname,
+                            'BC1': corrected_bc1,
+                            'BC2': corrected_bc2,
+                            'BC3': corrected_bc3,
+                            'UMI': umi
+                        })
 
-            # Get UMI quality
-            umi_start = rmap['BC3'] - 11 if rmap['BC3'] > 10 else 0
-            umi_end = rmap['BC3'] if rmap['BC3'] > 1 else 1
-            qumi = q[umi_start:umi_end]
-            umi = ''.join(seq[umi_start:umi_end])
+                    # Collect statistics for heatmaps
+                    for corrected_bc, bc_data in zip([corrected_bc1, corrected_bc2, corrected_bc3], [bc1_data, bc2_data, bc3_data]):
+                        if corrected_bc is not None:
+                            well_position = bc_data.loc[bc_data['Barcode'] == corrected_bc, 'WellPosition'].values[0]
+                            name = bc_data.loc[bc_data['Barcode'] == corrected_bc, 'Name'].values[0] if 'Name' in bc_data.columns else "Unknown"
+                            barcode_stats_list.append({
+                                'WellPosition': well_position,
+                                'Name': name,
+                                'Barcode': corrected_bc,
+                                'Count': 1
+                            })
 
-            # Get UMI if it has good quality
-            if evaluate_barcode_quality(qumi, qthreshold):
-                umi = umi
-            else:
-                umi = None
+            pbar.update(len(chunk))  # Update progress bar after processing each chunk
 
-            if None not in [corrected_bc1, corrected_bc2, corrected_bc3]:
-                barcode_ls.append({
-                    'query_name': qname,
-                    'BC1': corrected_bc1,
-                    'BC2': corrected_bc2,
-                    'BC3': corrected_bc3,
-                    'UMI': umi
-                })
+    # Convert the list of barcodes and statistics to DataFrames
+    barcode_df = pd.DataFrame(barcode_ls)
 
-                # Update barcode statistics
-                for corrected_bc, bc_data in zip([corrected_bc1, corrected_bc2, corrected_bc3], [bc1_data, bc2_data, bc3_data]):
-                    if corrected_bc is not None:
-                        well_position = bc_data.loc[bc_data['Barcode'] == corrected_bc, 'WellPosition'].values[0]
-                        name = bc_data.loc[bc_data['Barcode'] == corrected_bc, 'Name'].values[0]
-                        existing_row = barcode_stats[(barcode_stats['Barcode'] == corrected_bc) & (barcode_stats['WellPosition'] == well_position)]
-                        if not existing_row.empty:
-                            barcode_stats   .loc[existing_row.index, 'Count'] += 1
-                        else:
-                            new_row = pd.DataFrame([{'WellPosition': well_position, 'Name': name, 'Barcode': corrected_bc, 'Count': 1}])
-                            barcode_stats = pd.concat([barcode_stats, new_row], ignore_index=True)
+    if barcode_stats_list:
+        barcode_stats = pd.DataFrame(barcode_stats_list)
+        barcode_stats = barcode_stats.groupby(['WellPosition', 'Name', 'Barcode'], as_index=False).sum()
+    else:
+        barcode_stats = pd.DataFrame(columns=['WellPosition', 'Name', 'Barcode', 'Count'])
 
-    return pd.DataFrame(barcode_ls), barcode_stats
+    return barcode_df, barcode_stats
 
 
-#--------------------------------------------------------------------------------------------------------
-# Make graphs and stats
+#%%% Make graphs and stats
 #--------------------------------------------------------------------------------------------------------
 
 def parse_well_position(df):
@@ -675,7 +640,7 @@ def create_heatmap(data, title, filename):
     # Create the heatmap
     plt.figure(figsize=(12, 10))  # Adjusted width for wider graph
     ax = sns.heatmap(heatmap_data, annot=True, fmt=".0f", cmap=indigo_cmap, cbar=False, 
-                     xticklabels=True, yticklabels=True, linewidths=.5, linecolor='black')
+                     xticklabels=True, yticklabels=True, linewidths=0.5, linecolor='black')
     plt.title(title)
     plt.gca().invert_yaxis()
    
@@ -693,141 +658,148 @@ def create_heatmap(data, title, filename):
     plt.close()
 
 
-#--------------------------------------------------------------------------------------------------------
-# Tag final bam
+#%%% Tag final bam
 #--------------------------------------------------------------------------------------------------------
 
-def tag_barcode(clean_reads, output_bam, corrected_barcode_df, num_threads, chunk_size=10000):
-    
+def tag_barcode(fastq_file, output_bam_file, corrected_barcode_df, chunk_size=10000):
     """
-    Tags barcodes in the clean reads BAM file.
+    Converts a FASTQ file to a BAM file and tags barcodes in chunks, with a progress bar.
 
     Args:
-        clean_reads (str): Path to the clean reads BAM file.
-        output_bam (str): Path to the output BAM file.
+        fastq_file (str): Path to the input FASTQ file.
+        output_bam_file (str): Path to the output BAM file.
         corrected_barcode_df (pd.DataFrame): DataFrame containing the corrected barcodes.
-        num_threads (int): Number of threads to use for parallel processing.
         chunk_size (int, optional): Number of reads to process in each chunk. Default is 10000.
 
     Returns:
         None
     """
 
-    def tag_barcodes_chunk(chunk, barcode_dict):
-        output_reads = []
-        for read in chunk:
-            if read.flag == 77:
-                qname = read.query_name.split(' ')[0]
-                if qname in barcode_dict:
-                    barcode_info = barcode_dict[qname]
-                    xd, xe, xf, xm = barcode_info['BC1'], barcode_info['BC2'], barcode_info['BC3'], barcode_info['UMI']
-                    xc = xd + xe + xf
-
-                    # Add tags to the read
-                    read.set_tag('XD', xd, value_type='Z')
-                    read.set_tag('XE', xe, value_type='Z')
-                    read.set_tag('XF', xf, value_type='Z')
-                    read.set_tag('XC', xc, value_type='Z')
-                    read.set_tag('XM', xm, value_type='Z')
-                    output_reads.append(read)
-        return output_reads
-
-    def worker(bam_queue, result_queue, barcode_dict):
-        while not bam_queue.empty():
-            chunk = bam_queue.get()
-            if chunk is None:
-                break
-            result_queue.put(tag_barcodes_chunk(chunk, barcode_dict))
-            bam_queue.task_done()
-
+    # Convert the DataFrame to a dictionary for quick lookup
     barcode_dict = corrected_barcode_df.set_index('query_name').to_dict('index')
 
-    logging.info("Tagging barcodes in clean reads BAM file.")
+    logging.info("Tagging barcodes in read1.")
+    
     try:
-        bam_queue = Queue()
-        result_queue = Queue()
-
-        with pysam.AlignmentFile(clean_reads, "rb", check_sq=False) as bamfile, \
-                pysam.AlignmentFile(output_bam, "wb", header=bamfile.header) as outfile:
-            
-            total_reads = bamfile.mapped + bamfile.unmapped
-            chunk = []
-            for read in tqdm(bamfile.fetch(until_eof=True), total=total_reads, desc="Tagging barcodes"):
-                chunk.append(read)
-                if len(chunk) >= chunk_size:
-                    bam_queue.put(chunk)
+        # Open the BAM file for writing
+        with pysam.AlignmentFile(output_bam_file, "wb", header={'HD': {'VN': '1.0'}}) as bam_out:
+            # Parse the FASTQ file
+            with pysam.FastxFile(fastq_file) as fastq:
+                total_reads = sum(1 for _ in pysam.FastxFile(fastq_file))  # Calculate the total number of entries
+                with tqdm(total=total_reads, desc="Tagging barcodes") as pbar:
                     chunk = []
-            if chunk:
-                bam_queue.put(chunk)
+                    read_count = 0
 
-            threads = []
-            for _ in range(num_threads):
-                thread = ThreadPoolExecutor(max_workers=1).submit(worker, bam_queue, result_queue, barcode_dict)
-                threads.append(thread)
-            
-            bam_queue.join()
-            
-            while not result_queue.empty():
-                tagged_reads = result_queue.get()
-                for tagged_read in tagged_reads:
-                    outfile.write(tagged_read)
-                result_queue.task_done()
-                
-            for thread in threads:
-                thread.result()  # Ensures all threads complete
+                    for entry in fastq:
+                        read_count += 1
+
+                        # Create an unaligned BAM entry
+                        a = pysam.AlignedSegment()
+                        a.query_name = entry.name
+                        a.query_sequence = entry.sequence
+                        a.query_qualities = pysam.qualitystring_to_array(entry.quality)
+                        a.flag = 4  # Unmapped flag
+
+                        # Tag barcodes if available
+                        if entry.name in barcode_dict:
+                            barcode_info = barcode_dict[entry.name]
+                            xd, xe, xf, xm = barcode_info['BC1'], barcode_info['BC2'], barcode_info['BC3'], barcode_info['UMI']
+                            xc = xd + xe + xf
+
+                            # Add tags to the read
+                            a.set_tag('XD', xd, value_type='Z')
+                            a.set_tag('XE', xe, value_type='Z')
+                            a.set_tag('XF', xf, value_type='Z')
+                            a.set_tag('XC', xc, value_type='Z')
+                            a.set_tag('XM', xm, value_type='Z')
+
+                        # Add the read to the chunk
+                        chunk.append(a)
+
+                        # Process the chunk if it reaches the specified size
+                        if len(chunk) >= chunk_size:
+                            for read in chunk:
+                                bam_out.write(read)
+                            chunk = []  # Reset the chunk
+
+                        pbar.update(1)
+
+                    # Write remaining reads in the chunk
+                    if chunk:
+                        for read in chunk:
+                            bam_out.write(read)
+
+        logging.info(f"Successfully tagged to {output_bam_file}")
 
     except Exception as e:
-        logging.error(f"Failed to tag barcodes: {e}")
+        logging.error(
+            f"Failed to tag barcodes: {e}\n"
+            "HELP - This might be due to an issue with read 1 fasta or memory limitations. "
+            "Please check read1 fasta and system memory limitations.\n"
+            "HELP - Use -v <verbose> for more detailed debugging"
+        )
 
 
-#########################################################################################################
-# PROCESS DATA
+#%% PROCESS DATA
 #########################################################################################################
 
 def main():
-    # Some variables
-    clean_reads = args.clean_reads
+
+    # Define the variables
+    read1 = args.read1_fastq
+    read2 = args.read2_fastq
     num_threads = args.threads
     barcode_files_dir = args.bc_dir
     qthreshold = args.qval
-    output_bam = args.output_bam
+    output_bam = os.path.join(output_dir, f"{output_base}.bam")
     reference = os.path.join(barcode_files_dir, "invariable-linker-sequences.fasta")
+    skip_tagging = args.skip_tagging  
 
     logging.info("Starting barcode processing pipeline.")
     
-    # First executor for initial parsing tasks
+    # Use ThreadPoolExecutor for opening and parsing the fastq file with the barcodes (read2)
     with ThreadPoolExecutor(max_workers=num_threads) as initial_executor:
-        future_clean_df = [initial_executor.submit(parse_clean_bam_file, clean_reads)]
+
+        future_fastq = [initial_executor.submit(fastq_to_dataframe, read2)]
 
         clean_df = None
+        string_fastq = None
 
-        for future in as_completed(future_clean_df):
+        for future in as_completed(future_fastq):
             try:
-                clean_df = future.result()
-                logging.info("Parsed Clean Reads BAM to DataFrame")
+                string_fastq, clean_df = future.result()
+                logging.info("Parsed read2 to DataFrame")
                 gc.collect()
+
             except Exception as e:
-                logging.error(f"Failed to parse clean BAM file: {e}")
+                logging.error(
+                    f"Failed to parse read2 file: {e}. \n"
+                    "HELP - Use -v <verbose> for more detailed debugging")
                 sys.exit(1)
 
     if clean_df is not None:
-        # Use ThreadPoolExecutor for running bbmap and parsing coordinates
+        
+        # Use ThreadPoolExecutor for running bbmap and obtaining coordinates
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
-            future_bbmap = executor.submit(run_bbmap, clean_df, reference, num_threads)
+            future_bbmap = executor.submit(run_bbmap, string_fastq, reference, num_threads)
 
             try:
                 mapped_bam_data = future_bbmap.result()
-                logging.info("Barcode aligment to invariant sequence completed successfully.")
+                logging.info("Barcode alignment to invariant sequence completed successfully.")
 
-                # Submit the parse_and_compute_coordinates task
+                # Calculate barcode coordinates
                 future_map_dict = executor.submit(parse_and_compute_coordinates, mapped_bam_data)
-
                 map_dict = future_map_dict.result()
-                logging.info("Coordenated computed")
+                logging.info("Coordinates computed")
                 gc.collect()
 
             except Exception as e:
-                logging.error(f"Failed to align barcodes or parse coordinates: {e}")
+                logging.error(
+                    f"Failed to align barcodes or parse coordinates: {e}.\n"
+                    "HELP - Possible causes include issues with the reference file, improper barcode extraction, or memory limitations. "
+                    "Ensure all input files are correct and check system memory limitations.\n"
+                    "HELP - Use -v <verbose> for more detailed debugging"
+                )
                 sys.exit(1)
 
     original_reads = len(clean_df) if clean_df is not None else 0
@@ -836,7 +808,8 @@ def main():
     num_cells = 0
 
     if map_dict and not clean_df.empty:
-        # Second executor for barcode processing and tagging tasks
+
+        # Use ThreadPoolExecutor for barcode processing and calculating stats
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             future_results = executor.submit(process_barcodes, clean_df, map_dict, barcode_files_dir=barcode_files_dir, qthreshold=qthreshold)
 
@@ -855,38 +828,62 @@ def main():
                     for barcode in parsed_df['Name'].unique():
                         barcode_data = parsed_df[parsed_df['Name'] == barcode]
                         heatmap_filename = os.path.join(output_dir, f"{output_base}_heatmap_{barcode}.png")
-                        logging.info(f"Creating heatmap for {barcode}, filename: {heatmap_filename}")
+                        logging.info(f"Creating heatmap for {barcode} in: {heatmap_filename}")
                         create_heatmap(barcode_data, f"Heatmap for {barcode}", heatmap_filename)
-
-                    tag_barcode(clean_reads, output_bam, barcode_df, num_threads=num_threads)
-                    logging.info("Barcodes tagged to the final bam")
+                    
                     gc.collect()
+
                 else:
-                    logging.error("Processed barcode DataFrame is empty. Skipping tagging step.")
+                    logging.error(
+                        f"Processed barcode DataFrame is empty.\n"
+                        "HELP - This might be due to an issue with the input data, such as not finding the barcodes. "
+                        "Please check the input files and the barcode directory\n"
+                        "HELP - Use -v <verbose> for more detailed debugging"
+                    )
+
             except Exception as e:
-                logging.error(f"Failed to process barcodes: {e}")
+                logging.error(
+                    f"Failed to process barcodes: {e}\n"
+                    "HELP - This might be due to an issue with the input data, such as not finding the barcodes. "
+                    "Please check the input files and the barcode directory\n"
+                    "HELP - Use -v <verbose> for more detailed debugging"
+                )
                 sys.exit(1)
 
-    # Print final statistics
-    stats_logger.info(f"Number of original reads: {original_reads}")
-    stats_logger.info(f"Number of tagged reads: {tagged_reads}")
-    stats_logger.info(f"Efficiency: {efficiency:.2f}%")
-    stats_logger.info(f"Number of unique cells: {num_cells}")
+    if not skip_tagging:
+
+        # Use ThreadPoolExecutor to tag read1 with barcodes and write a bam
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            executor.submit(tag_barcode, fastq_file=read1,output_bam_file=output_bam,corrected_barcode_df=barcode_df)
+
+    else:
+        logging.info("Skipping the tagging step as requested.")
+
+    
 
     # Print stats_df to stats_logger
-    if not stats_df.empty:
+    if stats_logger:
         stats_df = stats_df.sort_values(by=['Name', 'WellPosition'])
         stats_df_dropped = stats_df.drop(columns=['Column', 'Row'])
-        stats_logger.info("------\nBarcode Statistics:")
         stats_logger.info(stats_df_dropped.to_string(index=False))
 
     logging.info("Barcode processing pipeline completed.")
-    logging.info("Have fun analyzing! (>ᴗ•)❀")
+    logging.info("Have fun analyzing! (>ᴗ•)❀\n")
+
+    # Print final statistics
+    logging.info(
+        f"Final info:\n"
+        f"\t\t\tNumber of original reads: {original_reads}\n"
+        f"\t\t\tNumber of taggable reads: {tagged_reads}\n"
+        f"\t\t\tEfficiency: {efficiency:.2f}%\n"
+        f"\t\t\tNumber of unique cells: {num_cells}"
+    )
 
     # Ensure all logging is outputted
     for handler in logging.root.handlers[:]:
         handler.flush()
         handler.close()
+
 
 if __name__ == "__main__":
     main()
