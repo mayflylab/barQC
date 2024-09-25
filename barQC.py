@@ -123,35 +123,6 @@ optional.add_argument('--skip_tagging',
 # Parse the arguments
 args = parser.parse_args()
 
-
-#%%% Check all the requirements are provided
-#--------------------------------------------------------------------------------------------------------
-
-# Check if all required arguments are provided and validate paths
-required_args_path = {'read1_fastq': args.read1_fastq, 'read2_fastq': args.read2_fastq,'bc_dir': args.bc_dir}
-missing_args_path = [arg for arg, path in required_args_path.items() if (path is None or not os.path.isfile(path)) and arg != 'bc_dir']
-if missing_args_path:
-    parser.print_help()
-    print(f"\nError: Missing or invalid arguments or incorrect path: {', '.join(missing_args_path)}\n")
-    exit(1)
-
-# Check if bc_dir contains necessary files
-expected_files = ['expected_barcodes_1.csv', 'expected_barcodes_2.csv', 'expected_barcodes_3.csv', 'invariable-linker-sequences.fasta']
-missing_files = [file for file in expected_files if not os.path.isfile(os.path.join(args.bc_dir, file))]
-if missing_files:
-    parser.print_help()
-    print(f"\nError: The following files are missing in the specified bc_dir ({args.bc_dir}): {', '.join(missing_files)}\n")
-    exit(1)
-
-# Check if all required arguments are provided
-required_args = ['output_name']
-missing_args = [arg for arg in required_args if getattr(args, arg) is None]
-if missing_args:
-    parser.print_help()
-    print(f"\nError: Missing required argument: {', '.join(missing_args)}\n")
-    exit(1)
-
-
 #%%% Set up logging configurations
 #--------------------------------------------------------------------------------------------------------
 
@@ -192,11 +163,67 @@ if args.stats:
 else:
     stats_logger = None
 
+#%%% Check all the requirements are provided
+#--------------------------------------------------------------------------------------------------------
+
+# Check if all required arguments are provided and validate paths
+required_args_path = {'read1_fastq': args.read1_fastq, 'read2_fastq': args.read2_fastq,'bc_dir': args.bc_dir}
+missing_args_path = [arg for arg, path in required_args_path.items() if (path is None or not os.path.isfile(path)) and arg != 'bc_dir']
+if missing_args_path:
+    parser.print_help()
+    print(f"\n\nERROR: Missing or invalid arguments or incorrect path: {', '.join(missing_args_path)}\n")
+    logging.error(f"Missing or invalid arguments or incorrect path: {', '.join(missing_args_path)}\n")
+    exit(1)
+
+
+# Check if bc_dir contains necessary files
+expected_files = ['expected_barcodes_1.csv', 'expected_barcodes_2.csv', 'expected_barcodes_3.csv', 'invariable-linker-sequences.fasta']
+missing_files = [file for file in expected_files if not os.path.isfile(os.path.join(args.bc_dir, file))]
+if missing_files:
+    parser.print_help()
+    print(f"\n\nERROR: The following files are missing in the specified bc_dir ({args.bc_dir}): {', '.join(missing_files)}\n")
+    logging.error(f"The following files are missing in the specified bc_dir ({args.bc_dir}): {', '.join(missing_files)}\n")
+    exit(1)
+
+# Check if all required arguments are provided
+required_args = ['output_name']
+missing_args = [arg for arg in required_args if getattr(args, arg) is None]
+if missing_args:
+    parser.print_help()
+    print(f"\n\nERROR: Missing required argument: {', '.join(missing_args)}\n")
+    logging.error(f"\n\nERROR: Missing required argument: {', '.join(missing_args)}\n")
+    exit(1)
+
+# Check if bbmap.sh is installed and accessible
+try:
+    result = subprocess.run(['bbmap.sh'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    # Check the return code to confirm if bbmap.sh exists
+    if result.returncode == 0:
+        debug_logger.debug("bbmap.sh is installed and accessible.")
+    else:
+        logging.error(
+            "bbmap.sh is not installed or not accessible."
+            f"\nError: {result.stderr}"
+            )
+        
+        print(f"\nError: bbmap.sh is not installed or not accessible. Exiting.\n")
+        exit(1)
+
+except FileNotFoundError:
+    logging.error("bbmap.sh is not installed or not found in the system's PATH.")
+    print(f"\nError: bbmap.sh is not installed or not found in the system's PATH. Exiting.\n")
+    exit(1)
+
+except Exception as e:
+    logging.error(f"An unexpected error occurred while checking bbmap.sh: {e}")
+    print(f"\nERROR: An unexpected error occurred while checking bbmap.sh. Exiting.\n")
+    exit(1)
+
 
 #%% FUNCTIONS
 #########################################################################################################
-
-
+    
 #%%% Auxiliary functions to map the barcodes
 #--------------------------------------------------------------------------------------------------------
    
@@ -342,6 +369,10 @@ def fastq_to_dataframe(fastq_file):
         with pysam.FastxFile(fastq_file) as fastq:
             total_reads = sum(1 for _ in fastq)  # Count entries
 
+        debug_logger.debug(
+            f"Number of entries detected in the fastq file: {total_reads}"
+        )
+
         # Parsing fastq with progress bar
         with pysam.FastxFile(fastq_file) as fastq:
             with tqdm(total=total_reads, desc="Parsing fastq for read 2") as pbar:
@@ -360,6 +391,16 @@ def fastq_to_dataframe(fastq_file):
             'seq': sequences,
             'qual': qualities
         })
+
+        debug_logger.debug(
+            f"Number of entries converted to dataframe: {len(df_fastq)} "
+            "(Fun: fastq_to_dataframe)"
+        )
+
+        debug_logger.debug(
+            f"Number of entries converted to string (for bbmap): {len(string_fastq)} "
+            "(Fun: fastq_to_dataframe)"
+        )
 
         return string_fastq, df_fastq
 
@@ -401,9 +442,14 @@ def run_bbmap(string_fastq, reference, cores):
                 'out=stdout.sam',
                 'int=f',
                 'k=8',
-                'minid=40',
-                f'threads={cores}'
-            ],
+                'minid=0.1',
+                'minratio=0.1',
+                f'threads={cores}',
+                'maxindel=100',
+                'ambiguous=best',
+                'local=false',
+                'strictmaxindel=false'
+             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -413,6 +459,11 @@ def run_bbmap(string_fastq, reference, cores):
         bbmap_stdout, bbmap_stderr = process.communicate(input=fastq_data)
 
         logging.info("Sequence aligned to find barcodes")
+
+        debug_logger.debug(
+            f"bbmap output:\n\n"
+            f"{bbmap_stderr.decode()}"
+        )
             
         process.wait()
 
@@ -422,7 +473,7 @@ def run_bbmap(string_fastq, reference, cores):
         logging.error(
             f"Error occurred while running bbmap.sh: {e}. "
             "This may be due to issues with the reference genome, input FASTQ data, or system resources. "
-            "Check the stderr output for more details:\n{e.stderr.decode()}"
+            f"Check the stderr output for more details:\n{e.stderr.decode()}"
         )
         logging.error(
             "Ensure that the reference file exists, is correctly formatted, "
@@ -450,20 +501,19 @@ def parse_and_compute_coordinates(mapped_bam):
     # Get CIGAR per sequence
     if isinstance(mapped_bam, bytes):
         mapped_bam = mapped_bam.decode('utf-8')
-    lines = mapped_bam.split('\n')
+    reads = mapped_bam.split('\n')
 
-    # print(lines)
+    for read in reads:
 
-    for line in lines:
-        if not line.strip():
-            # Skip empty lines
+        if not read.strip():
+            # Skip empty reads
             continue
 
-        if line.startswith('@'):
-            # Skip header lines
+        if read.startswith('@'):
+            # Skip header
             continue
 
-        fields = line.split('\t')
+        fields = read.split('\t')
         cigar = fields[5]
 
         if cigar and re.match(r'^[0-9]+S.*[^0-9][7-9]I.*', cigar):
@@ -474,6 +524,10 @@ def parse_and_compute_coordinates(mapped_bam):
 
     map_df = pd.DataFrame(records)
 
+    debug_logger.debug(
+            f"Number of reads with barcode coordinates: {len(map_df)} "
+            "(Fun: parse_and_compute_coordinates)"
+        )
 
     # Get barcodes
     map_df = compute_initial_coordinates(map_df, 'BC1', r'([0-9]+S$)', 0)
@@ -482,13 +536,18 @@ def parse_and_compute_coordinates(mapped_bam):
 
     map_df = map_df[(map_df['BC1'] >= 17) & (map_df['BC2'] >= 9) & (map_df['BC3'] >= 1)]
 
-    return map_df.set_index('query_name').to_dict('index')
+    map_dict=map_df.set_index('query_name').to_dict('index')
+
+    debug_logger.debug(
+            f"Number of reads with corrected barcodes: {len(map_dict)} "
+            "(Fun: parse_and_compute_coordinates)"
+        )
+
+    return map_dict
                         
 
 #%%% Process barcodes
 #--------------------------------------------------------------------------------------------------------
-
-from tqdm import tqdm
 
 def process_barcodes(clean_df, map_dict, barcode_files_dir, qthreshold, chunk_size=10000):
     """
@@ -581,12 +640,29 @@ def process_barcodes(clean_df, map_dict, barcode_files_dir, qthreshold, chunk_si
     # Convert the list of barcodes and statistics to DataFrames
     barcode_df = pd.DataFrame(barcode_ls)
 
+    debug_logger.debug(
+            f"Number of reads with corrected barcodes: {len(barcode_df)} "
+            "(Fun: process_barcodes)"
+        )
+
     if barcode_stats_list:
         barcode_stats = pd.DataFrame(barcode_stats_list)
         barcode_stats = barcode_stats.groupby(['WellPosition', 'Name', 'Barcode'], as_index=False).sum()
     else:
         barcode_stats = pd.DataFrame(columns=['WellPosition', 'Name', 'Barcode', 'Count'])
 
+    if barcode_stats.empty:
+        debug_logger.debug(
+                f"Barcode stats empty"
+                "(Fun: process_barcodes)"
+            )
+    
+    else:
+        debug_logger.debug(
+                f"Barcode stats are processed for {list(barcode_stats['Name'].unique())} "
+                "(Fun: process_barcodes)"
+            )
+    
     return barcode_df, barcode_stats
 
 
@@ -623,22 +699,18 @@ def create_heatmap(data, title, filename):
         None
     """
 
-    # Check if data is empty before pivoting
+    # Check if data is empty
     if data.empty:
         logging.warning(f"No data available to create heatmap for {title}.")
         return
 
-    # Pivot the data for heatmap and call infer_objects to prevent future warnings
     heatmap_data = data.pivot_table(index="Row", columns="Column", values="Count", fill_value=0).infer_objects(copy=False)
-    
-    # Sort the index in reverse alphabetical order
     heatmap_data = heatmap_data.loc[sorted(heatmap_data.index, reverse=True)]
 
-    # Define custom colormap
     indigo_cmap = LinearSegmentedColormap.from_list('white_to_indigo', ['white', '#002395'], N=1000)
     
     # Create the heatmap
-    plt.figure(figsize=(12, 10))  # Adjusted width for wider graph
+    plt.figure(figsize=(12, 10))  
     ax = sns.heatmap(heatmap_data, annot=True, fmt=".0f", cmap=indigo_cmap, cbar=False, 
                      xticklabels=True, yticklabels=True, linewidths=0.5, linecolor='black')
     plt.title(title)
@@ -653,7 +725,6 @@ def create_heatmap(data, title, filename):
     ax.xaxis.tick_top()
     ax.tick_params(left=False, top=False)
     
-    # Save the heatmap to a file
     plt.savefig(filename)
     plt.close()
 
@@ -738,6 +809,7 @@ def tag_barcode(fastq_file, output_bam_file, corrected_barcode_df, chunk_size=10
             "Please check read1 fasta and system memory limitations.\n"
             "HELP - Use -v <verbose> for more detailed debugging"
         )
+        sys.exit(1)
 
 
 #%% PROCESS DATA
@@ -821,8 +893,9 @@ def main():
                     tagged_reads = len(barcode_df)
                     efficiency = (tagged_reads / original_reads) * 100 if original_reads > 0 else 0.0
 
-                    unique_cells = barcode_df.drop_duplicates(subset=['BC1', 'BC2', 'BC3', 'UMI'])
-                    num_cells = len(unique_cells)
+                    cell_counts = barcode_df.groupby(['BC1', 'BC2', 'BC3']).size().reset_index(name='counts')
+                    valid_cells = cell_counts[cell_counts['counts'] > 10]
+                    num_cells = len(valid_cells)
 
                     parsed_df = parse_well_position(stats_df)
                     for barcode in parsed_df['Name'].unique():
@@ -840,6 +913,7 @@ def main():
                         "Please check the input files and the barcode directory\n"
                         "HELP - Use -v <verbose> for more detailed debugging"
                     )
+                    sys.exit(1)
 
             except Exception as e:
                 logging.error(
