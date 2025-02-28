@@ -766,8 +766,8 @@ def run_bbmap(fastq, reference, num_threads, usr_memory_limit):
         decoded_stderr = bbmap_stderr.decode() 
         debug_logger.debug(
             f"bbmap run:\n"
-            f"{"\n".join(decoded_stderr.splitlines()[:3])}"
-            f"\n{decoded_stderr.splitlines()[-1]}"
+            f"{'\n'.join(decoded_stderr.splitlines()[:3])}\n"
+            f"{decoded_stderr.splitlines()[-1]}"
         )
         
         # Clean up the temporary file
@@ -825,23 +825,25 @@ def parse_and_compute_coordinates(mapped_bam):
     records = []
 
     for read in mapped_bam[0]:
-
         if not read.strip():
-            # Skip empty reads
             continue
 
         if read.startswith('@'):
-            # Skip header
             continue
 
         fields = read.split('\t')
+        if len(fields) <= 5:
+            continue
+        
         cigar = fields[5]
+        if not cigar or not re.match(r'^[0-9]+S.*[^0-9][7-9]I.*', cigar):
+            continue
 
-        if cigar and re.match(r'^[0-9]+S.*[^0-9][7-9]I.*', cigar):
-            records.append({
-                'query_name': fields[0].split(' ')[0],  
-                'cigarstring': cigar
-                })
+        print(records)
+        records.append({
+            'query_name': fields[0].split(' ')[0],  
+            'cigarstring': cigar
+        })
 
     map_df = pd.DataFrame(records)
 
