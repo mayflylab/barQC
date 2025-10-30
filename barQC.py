@@ -839,7 +839,7 @@ def parse_and_compute_coordinates(mapped_bam):
         if not cigar or not re.match(r'^[0-9]+S.*[^0-9][7-9]I.*', cigar):
             continue
 
-        print(records)
+        # print(records)
         records.append({
             'query_name': fields[0].split(' ')[0],  
             'cigarstring': cigar
